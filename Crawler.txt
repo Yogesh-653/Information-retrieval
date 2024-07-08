@@ -1,0 +1,99 @@
+# Import necessary libraries
+import requests
+import lxml.html
+import json
+import pandas as pd
+import time
+import urllib.parse
+import pymysql
+import scrapy
+from sqlalchemy import create_engine
+
+# Check robots.txt to ensure crawling is allowed for the website
+robots = requests.get('https://pureportal.coventry.ac.uk/robots.txt')
+robots_text = robots.text
+if 'User-Agent: *\nDisallow: /' in robots:
+    print('Crawling not allowed for this website.')
+    exit()
+    sleep = 5
+else:
+    sleep = 0
+
+time.sleep(sleep)
+
+# Database connectivity details
+username = 'root'
+password = urllib.parse.quote_plus('Pass@123')
+host = '127.0.0.1'
+database = 'coventry'
+table_name = 'CGL'
+
+# Create a connection to the MySQL database using SQLAlchemy
+engine = create_engine('mysql+pymysql://' + username + ':' + password + '@' + host + '/' + database)
+
+# Crawler Functionality
+# Get the list of authors and their links from the webpage
+res = requests.get('https://pureportal.coventry.ac.uk/en/organisations/centre-global-learning/persons')
+tree = lxml.html.fromstring(res.content)
+CGL_authors = tree.xpath('//*[@id="main-content"]/div/section/ul/li/div/div[1]/h3/a/span/text()')
+CGL_authors_link = tree.xpath('//*[@id="main-content"]/div/section/ul/li/div/div[1]/h3/a/@href')
+
+# Initialize lists to store data for each author and their publications
+CGL_author = []
+CGL_author_link = []
+Title = []
+Title_links = []
+Co_authors = []
+Published_year = []
+
+# Loop through each author and fetch their publications
+for i, au in zip(CGL_authors, CGL_authors_link):
+    # Get the list of publications for the current author
+    res = requests.get(
+        'https://pureportal.coventry.ac.uk/en/publications/?search=' + str(i.replace(" ", '+')) + '&originalSearch=Sian+Alsop&pageSize=100&ordering=rating&descending=true&showAdvanced=false&allConcepts=true&inferConcepts=true&searchBy=PartOfNameOrTitle')
+    tree = lxml.html.fromstring(res.content)
+    title = tree.xpath('//*[@id="main-content"]/div/div[2]/ul/li/div[1]/div[1]/h3/a/span/text()')
+    title_link = tree.xpath('//*[@id="main-content"]/div/div[2]/ul/li/div[1]/div[1]/h3/a/@href')
+
+    # Loop through each publication and fetch its details
+    for j, k in zip(title_link, title):
+        res = requests.get(j)
+        tree = lxml.html.fromstring(res.content)
+        # Get the list of co-authors for the current publication
+        authors = tree.xpath('//*[@id="page-content"]/div[1]/section/div[1]/div/div[1]/div[2]/p/a/span/text()')
+        if authors == []:
+            authors = tree.xpath('//*[@id="page-content"]/div[1]/section/div[1]/div/div[1]/div[2]/p//text()')
+        # Get the published year of the current publication
+        published_year1 = ''.join(
+            tree.xpath('//*[@id="main-content"]/section[1]/div/div/div[1]/div/div/table/tbody/tr/th[contains("Publication status",text())]/ancestor::tr/td/span[2]/text()')).split(
+            ' ')[-1]
+
+        # Print the details for each publication (for debugging purposes)
+        print('*****************************************************')
+        print(i)
+        print(au)
+        print(k)
+        print(j)
+        print(','.join(authors))
+        print(published_year1)
+        print('*****************************************************')
+
+        # Append the publication details to respective lists
+        CGL_author.append(i)
+        CGL_author_link.append(au)
+        Title.append(k)
+        Title_links.append(j)
+        Co_authors.append(','.join(authors))
+        Published_year.append(published_year1)
+
+# Create a DataFrame from the collected data
+excel_dict = {'Author': CGL_author, 'Author_link': CGL_author_link, 'Title': Title, 'Title_Link': Title_links,
+              'Co_Authors': Co_authors, 'Published_year': Published_year}
+df = pd.DataFrame(excel_dict)
+
+# Establish connection with the MySQL database and save the data into a table
+engine.connect()
+df.to_sql('CGL', engine, index=False, if_exists='append')
+
+# Print success message
+print('File Created Successfully....')
